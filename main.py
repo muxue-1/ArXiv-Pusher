@@ -103,7 +103,7 @@ def daily_job():
     
     if report:
         # send_email('\n'.join(report))
-        with open('report.md', 'w') as f:
+        with open('report.md', 'w', encoding='utf-8') as f:
             f.write('\n'.join(report))
         print("Reports sent.")
 
