@@ -3,18 +3,20 @@ import requests
 from datetime import datetime, timedelta
 from arxiv import Client, Search, SortCriterion, SortOrder
 from PyPDF2 import PdfReader
-import openai
+import smtplib
+from email.mime.text import MIMEText
+from email.utils import formataddr
 
 from config import CONFIG
 
 def fetch_papers():
-    search_query = "(all:\"machine learning systems\" OR all:MLSys OR all:\"distributed machine learning\" OR all:\"model serving\") AND (cat:cs.LG OR cat:cs.DC)"
-    client = Client()  # 创建客户端实例
+    search_query = "(cat:cs.LG OR cat:cs.DC)"
+    client = Client()
     search = Search(
         query=search_query,
         sort_by=SortCriterion.SubmittedDate,
         sort_order=SortOrder.Descending,
-        max_results=100
+        max_results=5
     )
     
     papers = []
@@ -46,6 +48,39 @@ def extract_text_from_pdf(pdf_path):
             text += page.extract_text() + "\n"
     return text
 
+def ask(prompt: str, model: str = "deepseek-v3-250324") -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    
+    # print(f"API Key set: {'Yes' if api_key else 'No'}")
+    # print(f"Base URL set: {'Yes' if base_url else 'No'}")
+    
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is not set")
+    if not base_url:
+        raise ValueError("OPENAI_BASE_URL environment variable is not set")
+
+    response = requests.post(
+        url = base_url,
+        json = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.7,
+            "stream": False,
+        },
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
 def gpt_summarize(text):
     prompt = f"""请用中文总结以下学术论文内容：
 
@@ -55,23 +90,12 @@ def gpt_summarize(text):
 
 论文内容：{text}"""
 
-    client = openai.OpenAI(
-        base_url=CONFIG["base_url"],
-        api_key=CONFIG["api_key"]
-    )
-
     print(f"Requesting GPT to summarize: {text[:100]}...")
     print(f"Request length: {len(text)}")
-    response = client.chat.completions.create(
-        model=CONFIG["model"],
-        messages=[{
-            "role": "user",
-            "content": prompt
-        }],
-    )
-    print(f"Response: {response.choices[0].message.content[:100]}...")
-    print(f"Response length: {len(response.choices[0].message.content)}")
-    return response.choices[0].message.content
+    summary = ask(prompt, model=CONFIG["model"])
+    print(f"Response: {summary[:100]}...")
+    print(f"Response length: {len(summary)}")
+    return summary
 
 def daily_job():
     report = []
@@ -80,7 +104,7 @@ def daily_job():
     for paper in papers:
         try:
             # 下载并处理PDF
-            pdf_path = f"temp/{paper['title']}.pdf"
+            pdf_path = f"temp/{paper['pdf_url'][paper['pdf_url'].rfind('/')+1:]}.pdf"
             download_pdf(paper['pdf_url'], pdf_path)
             text = extract_text_from_pdf(pdf_path)
 
